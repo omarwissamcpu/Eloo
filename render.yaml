@@ -1,0 +1,40 @@
+# One-click deploy of the eloo backend on Render (render.com → New → Blueprint → pick this repo).
+# Starter plan + 1 GB disk ≈ $7–8/month. The disk keeps the SQLite database between deploys.
+services:
+  - type: web
+    name: eloo-backend
+    runtime: docker
+    rootDir: backend
+    dockerfilePath: ./Dockerfile
+    plan: starter
+    region: frankfurt # closest Render region to Iraq
+    healthCheckPath: /v1/health
+    autoDeploy: true
+    disk:
+      name: eloo-data
+      mountPath: /data
+      sizeGB: 1
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: DB_PATH
+        value: /data/eloo.db
+      - key: JWT_SECRET
+        generateValue: true
+      - key: OTP_PEPPER
+        generateValue: true
+      # Development defaults. Replace with your own servers (see infra/routing) before launch.
+      - key: OSRM_URL
+        value: https://router.project-osrm.org
+      - key: PHOTON_URL
+        value: https://photon.komoot.io
+      # "console" prints sign-up codes in the Render logs. Switch to "twilio" (and fill the
+      # TWILIO_* values in the dashboard) when the SMS account is ready.
+      - key: SMS_PROVIDER
+        value: console
+      - key: TWILIO_ACCOUNT_SID
+        sync: false
+      - key: TWILIO_AUTH_TOKEN
+        sync: false
+      - key: TWILIO_FROM
+        sync: false

@@ -1,0 +1,9 @@
+{$ROUTING_HOST} {
+	encode gzip
+	reverse_proxy osrm:5000
+}
+
+{$SEARCH_HOST} {
+	encode gzip
+	reverse_proxy photon:2322
+}

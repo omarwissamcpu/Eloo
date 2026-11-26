@@ -1,4 +1,6 @@
 import http from 'node:http';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import express from 'express';
 import { Server } from 'socket.io';
 import { openDb } from './db.js';
@@ -83,6 +85,10 @@ export function createApp(cfg, overrides = {}) {
   });
 
   app.use('/v1', api);
+
+  // Public pages (privacy policy & terms) for the app stores: https://<server>/privacy
+  const publicDir = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'public');
+  app.get(['/privacy', '/terms'], (_req, res) => res.sendFile(path.join(publicDir, 'privacy.html')));
   app.use((_req, _res, next) => next(new HttpError(404, 'not_found')));
   // eslint-disable-next-line no-unused-vars
   app.use((err, _req, res, _next) => {

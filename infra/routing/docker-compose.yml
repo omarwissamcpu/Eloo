@@ -1,0 +1,46 @@
+# eloo's own routing (OSRM) and place search (Photon) for Iraq, on one VPS.
+# Run ./setup.sh once; after that `docker compose up -d` keeps both running.
+#
+# Sizing: 4 vCPU / 8 GB RAM / 80 GB disk is comfortable for Iraq (Hetzner, DigitalOcean, etc.).
+
+services:
+  osrm:
+    image: ghcr.io/project-osrm/osrm-backend:latest
+    command: osrm-routed --algorithm mld --max-alternatives 3 /data/iraq-latest.osrm
+    volumes:
+      - ./data:/data
+    restart: unless-stopped
+    expose:
+      - "5000"
+
+  photon:
+    image: rtuszik/photon-docker:latest
+    environment:
+      - COUNTRY_CODE=iq # Iraq-only search index (check the image docs if this changes)
+      - UPDATE_STRATEGY=PARALLEL
+      - UPDATE_INTERVAL=168h # refresh weekly
+    volumes:
+      - photon_data:/photon/photon_data
+    restart: unless-stopped
+    expose:
+      - "2322"
+
+  # HTTPS in front of both, with automatic certificates.
+  # routing.<your-domain> → OSRM, search.<your-domain> → Photon
+  caddy:
+    image: caddy:2
+    ports:
+      - "80:80"
+      - "443:443"
+    environment:
+      - ROUTING_HOST=${ROUTING_HOST}
+      - SEARCH_HOST=${SEARCH_HOST}
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+    restart: unless-stopped
+    depends_on: [osrm, photon]
+
+volumes:
+  photon_data:
+  caddy_data:

@@ -48,6 +48,13 @@ You can also build in the cloud with no Mac or Android Studio: `npm i -g eas-cli
 
 Checks: `npm run typecheck` and `npm test` (navigation logic).
 
+## Put the server online
+
+- **Backend (one click):** on render.com choose **New → Blueprint**, pick this repo. `render.yaml` creates the server in Frankfurt with a 1 GB disk and generated secrets. Health check: `https://<your-service>.onrender.com/v1/health`.
+- **Privacy policy for the stores:** served by the backend at `/privacy`. Replace `[CONTACT EMAIL]` in `backend/public/privacy.html` first.
+- **Own routing + search for Iraq:** see `infra/routing/README.md` (one VPS, one script).
+- **Automatic checks:** every push runs the backend tests, app typecheck/tests and bundles (`.github/workflows/ci.yml`).
+
 ## Publishing to the App Store and Google Play
 
 1. Create an **Apple Developer** account ($99/year) and a **Google Play Console** account ($25 once), both in the company's name.

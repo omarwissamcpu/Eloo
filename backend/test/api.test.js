@@ -193,3 +193,10 @@ test('search and validation', async () => {
   assert.equal((await call('POST', '/route', { from: { lat: 200, lng: 1 }, to: { lat: 1, lng: 1 } }, t)).status, 400);
   assert.equal((await call('GET', '/nothing')).status, 404);
 });
+
+test('privacy policy page is served for the app stores', async () => {
+  const res = await fetch(base.replace('/v1', '/privacy'));
+  assert.equal(res.status, 200);
+  const html = await res.text();
+  assert.ok(html.includes('سياسة الخصوصية') && html.includes('Privacy Policy'));
+});
