@@ -50,7 +50,16 @@ Checks: `npm run typecheck` and `npm test` (navigation logic).
 
 ## Put the server online
 
-- **Backend (one click):** on render.com choose **New → Blueprint**, pick this repo. `render.yaml` creates the server in Frankfurt with a 1 GB disk and generated secrets. Health check: `https://<your-service>.onrender.com/v1/health`.
+### Free (no credit card): Back4app + Turso
+1. **Database:** at turso.tech, sign in with GitHub and create a database (pick the region closest to Iraq, e.g. Frankfurt). Copy its URL (`libsql://…turso.io`) and create an auth token.
+2. **Server:** at back4app.com → Containers, sign in with GitHub, create an app from this repo with **Root directory `backend`** (it uses `backend/Dockerfile`, port 4000).
+3. In the Back4app app's environment variables add `DATABASE_URL` (the Turso URL) and `DATABASE_AUTH_TOKEN` (the token). Nothing else is required: the server creates its own signing secret on first start.
+4. Check `https://<your-app>.b4a.run/v1/health` answers `{"ok":true}`, then set that address (with `/v1`) as `EXPO_PUBLIC_API_URL` in `app/eas.json`.
+
+Free-tier limits are fine for testing with a few dozen drivers; move to a paid plan before launch.
+
+### Paid: Render (one click)
+On render.com choose **New → Blueprint**, pick this repo. `render.yaml` creates the server in Frankfurt with a 1 GB disk. Health check: `https://<your-service>.onrender.com/v1/health`.
 - **Privacy policy for the stores:** served by the backend at `/privacy`. Replace `[CONTACT EMAIL]` in `backend/public/privacy.html` first.
 - **Own routing + search for Iraq:** see `infra/routing/README.md` (one VPS, one script).
 - **Automatic checks:** every push runs the backend tests, app typecheck/tests and bundles (`.github/workflows/ci.yml`).

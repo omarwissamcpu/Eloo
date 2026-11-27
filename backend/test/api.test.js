@@ -33,8 +33,8 @@ const fakeSearch = async ({ q }) => [{ id: 'n1', name: q, address: 'Baghdad', la
 
 let ctx, base;
 before(async () => {
-  const cfg = loadConfig({ dbPath: ':memory:', exposeDevCodes: true, smsProvider: 'console' });
-  ctx = createApp(cfg, { db: openDb(':memory:'), routeProvider: fakeOsrm, searchProvider: fakeSearch });
+  const cfg = loadConfig({ databaseUrl: ':memory:', exposeDevCodes: true, smsProvider: 'console' });
+  ctx = await createApp(cfg, { db: await openDb(':memory:'), routeProvider: fakeOsrm, searchProvider: fakeSearch });
   await new Promise((r) => ctx.server.listen(0, r));
   base = `http://127.0.0.1:${ctx.server.address().port}/v1`;
 });
@@ -199,4 +199,14 @@ test('privacy policy page is served for the app stores', async () => {
   assert.equal(res.status, 200);
   const html = await res.text();
   assert.ok(html.includes('سياسة الخصوصية') && html.includes('Privacy Policy'));
+});
+
+test('production server creates and keeps its own signing secret', async () => {
+  const db = await openDb(':memory:');
+  const a = await createApp(loadConfig({ jwtSecret: null, otpPepper: null }), { db, routeProvider: fakeOsrm, searchProvider: fakeSearch });
+  const b = await createApp(loadConfig({ jwtSecret: null, otpPepper: null }), { db, routeProvider: fakeOsrm, searchProvider: fakeSearch });
+  const row = await db.get("SELECT value FROM settings WHERE key = 'jwt_secret'");
+  assert.equal(row.value.length, 64);
+  await a.close();
+  await b.close();
 });

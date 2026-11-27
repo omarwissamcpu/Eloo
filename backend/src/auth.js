@@ -75,19 +75,19 @@ export function publicUser(u) {
 }
 
 export function authMiddleware(cfg, db) {
-  const getUser = db.prepare('SELECT * FROM users WHERE id = ?');
-  return (req, _res, next) => {
+  return h(async (req, _res, next) => {
     const token = (req.headers.authorization || '').replace(/^Bearer /, '');
     const id = verifyToken(cfg, token);
-    const user = id && getUser.get(id);
-    if (!user) return next(new HttpError(401, 'unauthorized'));
+    const user = id && (await db.get('SELECT * FROM users WHERE id = ?', id));
+    if (!user) throw new HttpError(401, 'unauthorized');
     req.user = user;
     next();
-  };
+  });
 }
 
 export function authRoutes(router, cfg, db) {
-  const insertUser = db.prepare('INSERT INTO users (id, phone, is_guest, lang, created_at) VALUES (?, ?, ?, ?, ?)');
+  const insertUser = (...a) => db.run('INSERT INTO users (id, phone, is_guest, lang, created_at) VALUES (?, ?, ?, ?, ?)', ...a);
+  const userById = (id) => db.get('SELECT * FROM users WHERE id = ?', id);
   const otpLimiter = rateLimiter({ windowMs: 60 * 60 * 1000, max: 5 });
   const ipLimiter = rateLimiter({ windowMs: 60 * 60 * 1000, max: 30 });
   const LANGS = ['ar', 'ckb', 'en'];
@@ -95,8 +95,8 @@ export function authRoutes(router, cfg, db) {
   router.post('/auth/guest', h(async (req, res) => {
     const lang = LANGS.includes(req.body?.lang) ? req.body.lang : 'ar';
     const id = newId('u');
-    insertUser.run(id, null, 1, lang, now());
-    const user = db.prepare('SELECT * FROM users WHERE id = ?').get(id);
+    await insertUser(id, null, 1, lang, now());
+    const user = await userById(id);
     res.status(201).json({ token: signToken(cfg, id), user: publicUser(user) });
   }));
 
@@ -104,12 +104,12 @@ export function authRoutes(router, cfg, db) {
     const phone = normalizePhone(req.body?.phone);
     if (!phone) throw new HttpError(400, 'invalid_phone');
     if (!otpLimiter(phone) || !ipLimiter(req.ip)) throw new HttpError(429, 'too_many_requests');
-    const prev = db.prepare('SELECT sent_at FROM otps WHERE phone = ?').get(phone);
+    const prev = await db.get('SELECT sent_at FROM otps WHERE phone = ?', phone);
     if (prev && now() - prev.sent_at < 30 * 1000) throw new HttpError(429, 'wait_before_resend');
     const code = String(crypto.randomInt(0, 1000000)).padStart(6, '0');
-    db.prepare(`INSERT INTO otps (phone, code_hash, expires_at, attempts, sent_at) VALUES (?, ?, ?, 0, ?)
-      ON CONFLICT(phone) DO UPDATE SET code_hash = excluded.code_hash, expires_at = excluded.expires_at, attempts = 0, sent_at = excluded.sent_at`)
-      .run(phone, hashCode(cfg, phone, code), now() + 5 * 60 * 1000, now());
+    await db.run(`INSERT INTO otps (phone, code_hash, expires_at, attempts, sent_at) VALUES (?, ?, ?, 0, ?)
+      ON CONFLICT(phone) DO UPDATE SET code_hash = excluded.code_hash, expires_at = excluded.expires_at, attempts = 0, sent_at = excluded.sent_at`,
+      phone, hashCode(cfg, phone, code), now() + 5 * 60 * 1000, now());
     await sendSms(cfg, phone, `eloo: ${code}`);
     const out = { phone, expiresInSec: 300 };
     if (cfg.smsProvider === 'console' && cfg.exposeDevCodes) out.devCode = code; // tests only
@@ -120,29 +120,29 @@ export function authRoutes(router, cfg, db) {
     const phone = normalizePhone(req.body?.phone);
     const code = str(req.body?.code, 'code', { max: 6 });
     if (!phone) throw new HttpError(400, 'invalid_phone');
-    const row = db.prepare('SELECT * FROM otps WHERE phone = ?').get(phone);
+    const row = await db.get('SELECT * FROM otps WHERE phone = ?', phone);
     if (!row || row.expires_at < now()) throw new HttpError(400, 'code_expired');
     if (row.attempts >= 5) throw new HttpError(429, 'too_many_attempts');
     const ok = crypto.timingSafeEqual(Buffer.from(row.code_hash), Buffer.from(hashCode(cfg, phone, code)));
     if (!ok) {
-      db.prepare('UPDATE otps SET attempts = attempts + 1 WHERE phone = ?').run(phone);
+      await db.run('UPDATE otps SET attempts = attempts + 1 WHERE phone = ?', phone);
       throw new HttpError(400, 'wrong_code');
     }
-    db.prepare('DELETE FROM otps WHERE phone = ?').run(phone);
+    await db.run('DELETE FROM otps WHERE phone = ?', phone);
 
-    let user = db.prepare('SELECT * FROM users WHERE phone = ?').get(phone);
+    let user = await db.get('SELECT * FROM users WHERE phone = ?', phone);
     if (!user) {
       // Upgrade the current guest account (keeps saved places and points) or create a new one.
       const guestId = verifyToken(cfg, (req.headers.authorization || '').replace(/^Bearer /, ''));
-      const guest = guestId && db.prepare('SELECT * FROM users WHERE id = ? AND is_guest = 1').get(guestId);
+      const guest = guestId && (await db.get('SELECT * FROM users WHERE id = ? AND is_guest = 1', guestId));
       if (guest) {
-        db.prepare('UPDATE users SET phone = ?, is_guest = 0 WHERE id = ?').run(phone, guest.id);
-        user = db.prepare('SELECT * FROM users WHERE id = ?').get(guest.id);
+        await db.run('UPDATE users SET phone = ?, is_guest = 0 WHERE id = ?', phone, guest.id);
+        user = await userById(guest.id);
       } else {
         const id = newId('u');
         const lang = ['ar', 'ckb', 'en'].includes(req.body?.lang) ? req.body.lang : 'ar';
-        insertUser.run(id, phone, 0, lang, now());
-        user = db.prepare('SELECT * FROM users WHERE id = ?').get(id);
+        await insertUser(id, phone, 0, lang, now());
+        user = await userById(id);
       }
     }
     res.json({ token: signToken(cfg, user.id), user: publicUser(user) });

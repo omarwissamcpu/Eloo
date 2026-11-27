@@ -88,7 +88,7 @@ export function routingRoutes(router, auth, deps) {
     const raw = await routeProvider({ from, to, via, mode });
     if (!raw.length) return res.json({ routes: [] });
 
-    const routes = raw.map((r, i) => {
+    const routes = await Promise.all(raw.map(async (r, i) => {
       const coords = r.geometry.coordinates;
       let duration = r.duration, coverage = 0;
       if (mode === 'car') {
@@ -97,12 +97,12 @@ export function routingRoutes(router, auth, deps) {
           durs.push(...(leg.annotation?.duration || []));
           speeds.push(...(leg.annotation?.speed || []));
         }
-        if (durs.length) ({ duration, coverage } = traffic.adjustDuration(coords, durs, speeds));
+        if (durs.length) ({ duration, coverage } = await traffic.adjustDuration(coords, durs, speeds));
       }
 
       // Incidents that sit on this route.
       const [minX, minY, maxX, maxY] = bbox(coords, 0.003);
-      const onRoute = incidents.listInBox(minX, minY, maxX, maxY, 1000)
+      const onRoute = (await incidents.listInBox(minX, minY, maxX, maxY, 1000))
         .filter((inc) => distanceToLine([inc.lng, inc.lat], coords) < 30);
       let penalty = 0, blocked = false;
       for (const inc of onRoute) {
@@ -123,7 +123,7 @@ export function routingRoutes(router, auth, deps) {
         geometry: { type: 'LineString', coordinates: coords },
         steps: simplifySteps(r),
       };
-    });
+    }));
 
     // Fastest open route first; blocked routes go last but stay visible.
     routes.sort((a, b) => (a.blocked - b.blocked) || (a.duration - b.duration));

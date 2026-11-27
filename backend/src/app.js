@@ -1,4 +1,5 @@
 import http from 'node:http';
+import crypto from 'node:crypto';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import express from 'express';
@@ -13,8 +14,15 @@ import { HttpError, newId, now, str, lat, lng, h } from './util.js';
 const AVATARS = ['m1', 'm2', 'm3', 'm4', 'f1', 'f2', 'f3', 'f4'];
 const LANGS = ['ar', 'ckb', 'en'];
 
-export function createApp(cfg, overrides = {}) {
-  const db = overrides.db || openDb(cfg.dbPath);
+export async function createApp(cfg, overrides = {}) {
+  const db = overrides.db || (await openDb(cfg.databaseUrl, cfg.databaseAuthToken));
+
+  if (!cfg.jwtSecret) {
+    // Create the signing secret once and keep it in the database.
+    await db.run('INSERT OR IGNORE INTO settings (key, value) VALUES (?, ?)', 'jwt_secret', crypto.randomBytes(32).toString('hex'));
+    cfg.jwtSecret = (await db.get('SELECT value FROM settings WHERE key = ?', 'jwt_secret')).value;
+  }
+  if (!cfg.otpPepper) cfg.otpPepper = crypto.createHash('sha256').update(cfg.jwtSecret).digest('hex');
   const app = express();
   const server = http.createServer(app);
   const io = new Server(server, { cors: { origin: '*' } });
@@ -38,21 +46,21 @@ export function createApp(cfg, overrides = {}) {
     const name = b.name !== undefined ? str(b.name, 'name', { max: 40, optional: true }) : req.user.name;
     if (b.avatar !== undefined && !AVATARS.includes(b.avatar)) throw new HttpError(400, 'invalid_avatar');
     if (b.lang !== undefined && !LANGS.includes(b.lang)) throw new HttpError(400, 'invalid_lang');
-    db.prepare('UPDATE users SET name = ?, avatar = ?, lang = ? WHERE id = ?')
-      .run(name, b.avatar ?? req.user.avatar, b.lang ?? req.user.lang, req.user.id);
-    res.json({ user: publicUser(db.prepare('SELECT * FROM users WHERE id = ?').get(req.user.id)) });
+    await db.run('UPDATE users SET name = ?, avatar = ?, lang = ? WHERE id = ?',
+      name, b.avatar ?? req.user.avatar, b.lang ?? req.user.lang, req.user.id);
+    res.json({ user: publicUser(await db.get('SELECT * FROM users WHERE id = ?', req.user.id)) });
   }));
-  api.delete('/me', auth, (req, res) => {
+  api.delete('/me', auth, h(async (req, res) => {
     // Account deletion is required by the App Store and Google Play.
-    db.prepare('DELETE FROM places WHERE user_id = ?').run(req.user.id);
-    db.prepare("UPDATE users SET phone = NULL, name = NULL, avatar = NULL, is_guest = 1 WHERE id = ?").run(req.user.id);
+    await db.run('DELETE FROM places WHERE user_id = ?', req.user.id);
+    await db.run('UPDATE users SET phone = NULL, name = NULL, avatar = NULL, is_guest = 1 WHERE id = ?', req.user.id);
     res.json({ deleted: true });
-  });
+  }));
 
   // ---- Saved places (home, work, favorites) -------------------------------
-  api.get('/places', auth, (req, res) => {
-    res.json({ places: db.prepare('SELECT id, kind, label, address, lat, lng FROM places WHERE user_id = ? ORDER BY created_at').all(req.user.id) });
-  });
+  api.get('/places', auth, h(async (req, res) => {
+    res.json({ places: await db.all('SELECT id, kind, label, address, lat, lng FROM places WHERE user_id = ? ORDER BY created_at', req.user.id) });
+  }));
   api.post('/places', auth, h(async (req, res) => {
     const b = req.body || {};
     const kind = ['home', 'work', 'favorite'].includes(b.kind) ? b.kind : null;
@@ -63,17 +71,17 @@ export function createApp(cfg, overrides = {}) {
       address: str(b.address, 'address', { max: 200, optional: true }),
       lat: lat(b.lat), lng: lng(b.lng),
     };
-    if (kind !== 'favorite') db.prepare('DELETE FROM places WHERE user_id = ? AND kind = ?').run(req.user.id, kind);
-    const count = db.prepare('SELECT COUNT(*) n FROM places WHERE user_id = ?').get(req.user.id).n;
+    if (kind !== 'favorite') await db.run('DELETE FROM places WHERE user_id = ? AND kind = ?', req.user.id, kind);
+    const count = (await db.get('SELECT COUNT(*) AS n FROM places WHERE user_id = ?', req.user.id)).n;
     if (count >= 100) throw new HttpError(400, 'too_many_places');
-    db.prepare('INSERT INTO places (id, user_id, kind, label, address, lat, lng, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)')
-      .run(place.id, req.user.id, place.kind, place.label, place.address, place.lat, place.lng, now());
+    await db.run('INSERT INTO places (id, user_id, kind, label, address, lat, lng, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
+      place.id, req.user.id, place.kind, place.label, place.address, place.lat, place.lng, now());
     res.status(201).json({ place });
   }));
-  api.delete('/places/:id', auth, (req, res) => {
-    const r = db.prepare('DELETE FROM places WHERE id = ? AND user_id = ?').run(req.params.id, req.user.id);
+  api.delete('/places/:id', auth, h(async (req, res) => {
+    const r = await db.run('DELETE FROM places WHERE id = ? AND user_id = ?', req.params.id, req.user.id);
     res.json({ deleted: r.changes > 0 });
-  });
+  }));
 
   incidentRoutes(api, db, io, auth, incidents);
   trafficRoutes(api, auth, traffic);
@@ -105,11 +113,11 @@ export function createApp(cfg, overrides = {}) {
     next();
   });
 
-  const sweeper = setInterval(() => incidents.expireOld(), 60 * 1000);
+  const sweeper = setInterval(() => incidents.expireOld().catch((e) => console.error('expire failed', e)), 60 * 1000);
   sweeper.unref();
 
   return {
     app, server, io, db, incidents, traffic,
-    close: () => new Promise((resolve) => { clearInterval(sweeper); io.close(); server.close(() => resolve()); }),
+    close: () => new Promise((resolve) => { clearInterval(sweeper); io.close(); server.close(() => { db.close?.(); resolve(); }); }),
   };
 }
